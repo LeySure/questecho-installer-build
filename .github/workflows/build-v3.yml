@@ -1,0 +1,114 @@
+name: build-installer-v3
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Fetch source
+        shell: bash
+        run: |
+          curl -fsSL -o installer-src.zip "https://questecho.dpdns.org/ci/installer-src.zip"
+          PY=python3; if [ "$RUNNER_OS" = "Windows" ]; then PY=python; fi
+          $PY -c "import zipfile; zipfile.ZipFile('installer-src.zip').extractall('app')"
+      - name: Cross-platform regression
+        shell: bash
+        run: node app/test/cross-platform.js
+      - name: Build
+        shell: bash
+        run: cd app && npm ci && npx electron-builder --win -c.directories.output=dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win
+          path: app/dist/*.exe
+
+  mac-arm64:
+    runs-on: macos-15
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Fetch source
+        shell: bash
+        run: |
+          curl -fsSL -o installer-src.zip "https://questecho.dpdns.org/ci/installer-src.zip"
+          PY=python3; if [ "$RUNNER_OS" = "Windows" ]; then PY=python; fi
+          $PY -c "import zipfile; zipfile.ZipFile('installer-src.zip').extractall('app')"
+      - name: Build
+        shell: bash
+        run: cd app && npm ci && npx electron-builder --mac dmg --arm64 -c.directories.output=dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-arm64
+          path: app/dist/*.dmg
+
+  mac-x64:
+    runs-on: macos-15-intel
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Fetch source
+        shell: bash
+        run: |
+          curl -fsSL -o installer-src.zip "https://questecho.dpdns.org/ci/installer-src.zip"
+          PY=python3; if [ "$RUNNER_OS" = "Windows" ]; then PY=python; fi
+          $PY -c "import zipfile; zipfile.ZipFile('installer-src.zip').extractall('app')"
+      - name: Build
+        shell: bash
+        run: cd app && npm ci && npx electron-builder --mac dmg --x64 -c.directories.output=dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-x64
+          path: app/dist/*.dmg
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: FUSE
+        run: sudo apt-get update && sudo apt-get install -y libfuse2
+      - name: Fetch source
+        shell: bash
+        run: |
+          curl -fsSL -o installer-src.zip "https://questecho.dpdns.org/ci/installer-src.zip"
+          PY=python3; if [ "$RUNNER_OS" = "Windows" ]; then PY=python; fi
+          $PY -c "import zipfile; zipfile.ZipFile('installer-src.zip').extractall('app')"
+      - name: Build
+        shell: bash
+        run: cd app && npm ci && npx electron-builder --linux appimage --x64 -c.directories.output=dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: app/dist/*.AppImage
+
+  release:
+    needs: [win, mac-arm64, mac-x64, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: List
+        run: ls -lh artifacts
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create installer-1.4.0 artifacts/* --repo "$GITHUB_REPOSITORY" \
+            --title "QuestEcho Installer 1.4.0" --notes "Windows / macOS arm64 / macOS x64 / Linux" || \
+          gh release upload installer-1.4.0 artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
